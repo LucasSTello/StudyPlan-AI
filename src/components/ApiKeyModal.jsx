@@ -62,6 +62,10 @@ export default function ApiKeyModal({ isOpen, onClose, onSave }) {
           <strong style={{ color: 'var(--text-primary)' }}> Nota de seguridad:</strong> Su clave se guarda localmente en su navegador y nunca se envía a ningún servidor que no sea la API oficial de OpenAI.
         </p>
 
+        <div style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.15)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+          💡 <strong style={{ color: 'var(--primary)' }}>¿No tienes una API Key de OpenAI?</strong> Puedes ingresar la palabra <strong style={{ color: 'white', background: 'rgba(255,255,255,0.08)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace' }}>demo</strong> para activar el **Modo de Prueba Local (Offline)** y testear la aplicación de forma completa e instantánea.
+        </div>
+
         <form onSubmit={handleSubmit} className="config-body">
           <div className="form-group" style={{ position: 'relative' }}>
             <label className="form-label">Clave API de OpenAI</label>

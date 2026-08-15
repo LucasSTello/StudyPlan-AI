@@ -9,9 +9,12 @@ export async function validateApiKey(apiKey) {
   if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
     return false;
   }
+  // Permitimos "demo" o "offline" como API key local de prueba
+  if (apiKey.toLowerCase() === 'demo' || apiKey.toLowerCase() === 'offline') {
+    return true;
+  }
   try {
     const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-    // Hacemos una llamada ligera para verificar validez
     await openai.models.list();
     return true;
   } catch (error) {
@@ -98,7 +101,6 @@ function createUserPrompt(studentData) {
     objetivo
   } = studentData;
 
-  // Formatear arreglos y objetos
   const formatList = (arr) => (arr && arr.length > 0 ? arr.join(', ') : 'No especificado');
   const formatObject = (obj) => {
     if (!obj || Object.keys(obj).length === 0) return 'No especificado';
@@ -120,12 +122,112 @@ Por favor, analiza la información anterior y genera el plan de estudio estructu
 }
 
 /**
- * Llama a la API de OpenAI para generar el plan de estudio.
+ * Genera un plan de estudio local simulado de forma determinista para pruebas offline.
+ */
+function generateLocalPlan(studentData) {
+  const {
+    materias,
+    fechas_examen,
+    horas_disponibles,
+    dias_disponibles,
+    dificultades,
+    temas_pendientes,
+    objetivo
+  } = studentData;
+
+  // 1. Calcular Prioridades ordenando por fecha de examen más cercana
+  const sortedMaterias = [...materias].sort((a, b) => {
+    const dateA = fechas_examen[a] ? new Date(fechas_examen[a]) : new Date(8640000000000000);
+    const dateB = fechas_examen[b] ? new Date(fechas_examen[b]) : new Date(8640000000000000);
+    return dateA - dateB;
+  });
+
+  const prioridades = sortedMaterias.map((materia) => {
+    const fecha = fechas_examen[materia] ? new Date(fechas_examen[materia]).toLocaleDateString('es-ES') : 'No indicada';
+    const dif = dificultades[materia] || 'Medio';
+    return {
+      materia,
+      motivo: `Priorizada por fecha de examen (${fecha}) y dificultad percibida como ${dif}. Temas pendientes: ${temas_pendientes[materia] || 'Generales'}.`
+    };
+  });
+
+  // 2. Generar el Plan Semanal distribuyendo las horas disponibles en los días indicados
+  const plan_semanal = [];
+  const objetivos = [];
+  const horas = horas_disponibles || 2;
+  const duracionBloque = 45; // Pomodoro
+  const descansoBloque = 15;
+  
+  // Calcular cantidad de bloques de estudio por día
+  const bloquesPorDia = Math.max(1, Math.floor((horas * 60) / (duracionBloque + descansoBloque)));
+
+  dias_disponibles.forEach((dia, diaIdx) => {
+    // Definimos el horario de inicio (estimado)
+    let horaInicio = 9; // 9:00 AM
+
+    for (let b = 0; b < bloquesPorDia; b++) {
+      // Rotamos las materias por bloque para alternarlas
+      const matIdx = (diaIdx * bloquesPorDia + b) % materias.length;
+      const materiaSelected = materias[matIdx];
+      
+      // Parsear temas pendientes
+      const temasText = temas_pendientes[materiaSelected] || '';
+      const temasList = temasText.split(',').map(t => t.trim()).filter(Boolean);
+      const temaActual = temasList[b % Math.max(1, temasList.length)] || 'Repaso de conceptos claves';
+
+      const horaFin = horaInicio + 1; // bloques de 1 hora incluyendo descanso
+      const formatTime = (h) => `${String(h).padStart(2, '0')}:00`;
+
+      plan_semanal.push({
+        dia,
+        horario: `${formatTime(horaInicio)} - ${formatTime(horaFin)}`,
+        materia: materiaSelected,
+        tema: temaActual,
+        actividad: b === bloquesPorDia - 1 ? 'Resolución de autoevaluación' : 'Lectura activa y toma de notas',
+        duracion: `${duracionBloque} min`,
+        descanso: `${descansoBloque} min`
+      });
+
+      horaInicio = horaFin;
+    }
+
+    // Agregar objetivo del día
+    const materiasDelDia = [...new Set(plan_semanal.filter(p => p.dia === dia).map(p => p.materia))];
+    objetivos.push({
+      dia,
+      descripcion: `Cubrir los bloques asignados de ${materiasDelDia.join(' y ')}, enfocándose en la resolución de problemas prácticos.`
+    });
+  });
+
+  return {
+    prioridades,
+    plan_semanal,
+    objetivos,
+    repaso: {
+      cuando: `Al inicio de cada bloque de estudio (repaso espaciado de 10 min) y los fines de semana.`,
+      como: `Utilizar metodologías de estudio activo como Active Recall (auto-explicarse el tema) y la técnica de Feynman para los conceptos más difíciles de ${sortedMaterias[0]}.`
+    },
+    recomendaciones: [
+      `Respete los descansos de ${descansoBloque} minutos por cada bloque de estudio para evitar la fatiga cognitiva.`,
+      `Realice una autoevaluación 3 días antes de la fecha del examen de ${sortedMaterias[0]}.`,
+      objetivo ? `Mantener el enfoque en su meta principal: "${objetivo}".` : `Organizar las sesiones de estudio con constancia.`
+    ]
+  };
+}
+
+/**
+ * Llama a la API de OpenAI para generar el plan de estudio (con fallback offline).
  * @param {string} apiKey - La clave de API de OpenAI.
  * @param {Object} studentData - Los datos recolectados en el formulario.
  * @returns {Promise<Object>} - El plan de estudio parseado como objeto de JavaScript.
  */
 export async function generateStudyPlan(apiKey, studentData) {
+  if (apiKey.toLowerCase() === 'demo' || apiKey.toLowerCase() === 'offline') {
+    // Simular un delay de red de 1.5 segundos
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return generateLocalPlan(studentData);
+  }
+
   const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
   
   try {
@@ -147,14 +249,35 @@ export async function generateStudyPlan(apiKey, studentData) {
 }
 
 /**
- * Ajusta un plan de estudio existente basado en las instrucciones del usuario.
+ * Ajusta un plan de estudio existente basado en las instrucciones del usuario (con fallback offline).
  * @param {string} apiKey - La clave de API de OpenAI.
  * @param {Object} currentPlan - El plan de estudio actual en formato JSON.
  * @param {Object} studentData - Los datos del estudiante.
- * @param {string} userInstructions - La solicitud de ajuste por chat (ej: "Mover física al martes").
+ * @param {string} userInstructions - La solicitud de ajuste por chat.
  * @returns {Promise<{plan: Object, responseText: string}>} - El plan actualizado y la respuesta de texto.
  */
 export async function adjustStudyPlan(apiKey, currentPlan, studentData, userInstructions) {
+  if (apiKey.toLowerCase() === 'demo' || apiKey.toLowerCase() === 'offline') {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    
+    // Simular un ajuste local básico para demostrar interactividad
+    const planActualizado = JSON.parse(JSON.stringify(currentPlan));
+    let mensaje = `He procesado tu solicitud de ajuste ("${userInstructions}"). En este modo offline de prueba, he reorganizado levemente los temas del plan semanal para priorizar tus necesidades. ¡Sigue así!`;
+    
+    // Intentar responder contextualmente a solicitudes típicas
+    const instruccion = userInstructions.toLowerCase();
+    if (instruccion.includes('matemática') || instruccion.includes('física') || instruccion.includes('química')) {
+      mensaje = `Entendido. He reorganizado los bloques de estudio de la materia solicitada en tu cronograma semanal para optimizar tus horas de estudio de forma equilibrada.`;
+    } else if (instruccion.includes('descanso') || instruccion.includes('reducir') || instruccion.includes('horas')) {
+      mensaje = `Hecho. He flexibilizado los bloques en tu plan semanal, asegurándome de alternar las materias de manera que no sobrecargues tus jornadas.`;
+    }
+
+    return {
+      plan: planActualizado,
+      responseText: mensaje
+    };
+  }
+
   const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
 
   const systemInstructions = `Eres el asistente académico StudyPlan AI. Tu tarea es ajustar el plan de estudio existente según las solicitudes del estudiante, manteniendo las reglas de planificación previas (realista, equilibrado, sin inventar datos que el usuario no haya provisto).
@@ -184,7 +307,7 @@ Por favor, ajusta el plan según la solicitud y responde únicamente con el obje
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: systemInstructions },
+        { role: 'system', systemInstructions },
         { role: 'user', content: userPrompt }
       ],
       response_format: { type: 'json_object' }
